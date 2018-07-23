@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# bin/compile <build-dir> <cache-dir> <env-dir>
+
+# fail fast
+set -e;
+
+BP_DIR=$(cd $(dirname $0)/..; pwd); # absolute path
+BIN_DIR=$BP_DIR/bin;
+
+# parse args
+BUILD_DIR=$1;
+CACHE_DIR=$2;
+ENV_DIR=$3;
+
+JVM_COMMON_BUILDPACK=${JVM_COMMON_BUILDPACK:-"https://codon-buildpacks.s3.amazonaws.com/buildpacks/heroku/jvm-common.tgz"};
+mkdir -p /tmp/jvm-common;
+curl --retry 3 --silent --location $JVM_COMMON_BUILDPACK | tar xzm -C /tmp/jvm-common --strip-components=1;
+. /tmp/jvm-common/bin/util;
+. /tmp/jvm-common/bin/java;
+
+install_java_with_overlay ${BUILD_DIR};
+
+JETTY_VERSION="9.4.11.v20180605";
+JETTY_SHA1="1beabb2ad3e7a1c591ff74c8f18a8a88e6c5b41e";
+JETTY_HOME=".jetty/jetty-distribution-${JETTY_VERSION}";
+
+cd $BUILD_DIR;
+
+mkdir -p .jetty;
+
+echo -n "-----> Installing Jetty ${JETTY_VERSION}... ";
+curl -O https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-distribution/$JETTY_VERSION/jetty-distribution-$JETTY_VERSION.tar.gz;
+echo "downloaded";
+sha1sum jetty-distribution-$JETTY_VERSION.tar.gz | grep $JETTY_SHA1 > /dev/null 2>&1;
+echo "verified checksum";
+
+tar xf jetty-distribution-$JETTY_VERSION.tar.gz;
+echo "extracted";
+mv jetty-distribution-$JETTY_VERSION $JETTY_HOME;
+echo "moved";
+rm jetty-distribution-$JETTY_VERSION.tar.gz;
+echo "done";
+
+echo "-----> Creating configuration..."
+if [ -f $BUILD_DIR/Procfile ]; then
+  echo "        - Using existing process types";
+else
+  cat << EOF > $BUILD_DIR/Procfile
+web: java \$JAVA_OPTS -jar /app/\$JETTY_HOME/start.jar -Djetty.http.host=0.0.0.0 -Djetty.http.port=\$PORT
+EOF
+fi
+
+cat << EOF > $BUILD_DIR/.profile.d/jetty.sh
+export JETTY_HOME=${JETTY_HOME};
+chmod 755 $JETTY_HOME/start.jar;
+EOF
